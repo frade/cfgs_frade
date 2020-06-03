@@ -8,8 +8,11 @@
 --
 
 import XMonad
+import XMonad.Hooks.DynamicLog
 import Data.Monoid
 import System.Exit
+
+-- import XMonad.Util.WorkspaceScreenshot
 
 import qualified XMonad.StackSet as W
 import qualified Data.Map        as M
@@ -19,6 +22,8 @@ import XMonad.Util.SpawnOnce
 import XMonad.Util.Run
 import XMonad.Hooks.ManageDocks
 import XMonad.Hooks.EwmhDesktops
+
+import Graphics.X11.ExtraTypes.XF86
 
 import XMonad.Hooks.ManageHelpers (isFullscreen, doFullFloat)
 
@@ -44,7 +49,7 @@ myBorderWidth   = 2
 -- ("right alt"), which does not conflict with emacs keybindings. The
 -- "windows key" is usually mod4Mask.
 --
-myModMask       = mod1Mask
+myModMask       = mod4Mask
 
 -- The default number of workspaces (virtual screens) and their names.
 -- By default we use numeric strings, but any string may be used as a
@@ -55,21 +60,43 @@ myModMask       = mod1Mask
 --
 -- > workspaces = ["web", "irc", "code" ] ++ map show [4..9]
 --
-myWorkspaces    = ["msg","web","work","vid","5","6","7","8","9"]
+--myWorkspaces    = ["msg","web","work","vid"] ++ map show [5..9]
+
+xmobarEscape :: [Char] -> [Char]
+xmobarEscape = concatMap doubleLts
+  where
+	doubleLts '<' = "<<"
+	doubleLts x = [x]
+
+myWorkspaces :: [String]
+myWorkspaces = clickable . (map xmobarEscape)
+			$ ["chat", "www", "sys", "work", "vid"]
+	where
+		clickable l = [ "<action=xdotool key super+" ++ show (n) ++ ">" ++ ws ++ "</action>" |
+			(i,ws) <- zip [1..9] l,
+			let n = i ]
+
 
 -- Border colors for unfocused and focused windows, respectively.
 --
 myNormalBorderColor  = "#292d3e"
 myFocusedBorderColor = "#bbc5ff"
 
+windowCount :: X (Maybe String)
+windowCount = gets $ Just . show . length . W.integrate' . W.stack . W.workspace . W.current . windowset
+
 ------------------------------------------------------------------------
 -- Key bindings. Add, modify or remove key bindings here.
 --
 myKeys conf@(XConfig {XMonad.modMask = modm}) = M.fromList $
-
     -- launch a terminal
-    [ ((modm .|. shiftMask, xK_Return), spawn $ XMonad.terminal conf)
-
+    [
+      ((0, xF86XK_MonBrightnessUp), spawn "lux -a 5%")
+    , ((0, xF86XK_MonBrightnessDown), spawn "lux -s 5%")
+    , ((0, xF86XK_AudioRaiseVolume), spawn "pactl set-sink-volume @DEFAULT_SINK@ +5%")
+    , ((modm .|. shiftMask, xK_Return), spawn $ XMonad.terminal conf)
+    , ((0, xF86XK_AudioLowerVolume), spawn "pactl set-sink-volume @DEFAULT_SINK@ -5%")
+    , ((0, xF86XK_AudioMute), spawn "pactl set-sink-mute @DEFAULT_SINK@ toggle")
     -- launch dmenu
     , ((modm,               xK_p     ), spawn "dmenu_run")
 
@@ -128,7 +155,7 @@ myKeys conf@(XConfig {XMonad.modMask = modm}) = M.fromList $
     -- Use this binding with avoidStruts from Hooks.ManageDocks.
     -- See also the statusBar function from Hooks.DynamicLog.
     --
-    -- , ((modm              , xK_b     ), sendMessage ToggleStruts)
+    , ((modm              , xK_b     ), sendMessage ToggleStruts)
 
     -- Quit xmonad
     , ((modm .|. shiftMask, xK_q     ), io (exitWith ExitSuccess))
@@ -138,6 +165,7 @@ myKeys conf@(XConfig {XMonad.modMask = modm}) = M.fromList $
 
     -- Run xmessage with a summary of the default keybindings (useful for beginners)
     , ((modm .|. shiftMask, xK_slash ), spawn ("echo \"" ++ help ++ "\" | xmessage -file -"))
+    , ((0,xK_Print), spawn "scrot -q 90 /home/frade/Pictures/screenshots/%Y-%m-%d-%H:%M:%S.png")
     ]
     ++
 
@@ -218,12 +246,13 @@ myLayout = avoidStruts (tiled ||| Mirror tiled ||| Full)
 -- To match on the WM_NAME, you can use 'title' in the same way that
 -- 'className' and 'resource' are used below.
 --
+myManageHook :: Query (Data.Monoid.Endo WindowSet)
 myManageHook = composeAll
     [ className =? "MPlayer"        --> doFloat
     , className =? "Gimp"           --> doFloat
-    , resource  =? "desktop_window" --> doIgnore
-    , resource  =? "kdesktop"       --> doIgnore
- ]
+    , className =? "Firefox-esr"    --> doShift (myWorkspaces !! 1)
+    , className =? "TelegramDesktop" --> doShift (myWorkspaces !! 0)
+   ] 
 
 ------------------------------------------------------------------------
 -- Event handling
@@ -242,7 +271,7 @@ myEventHook = handleEventHook def <+> fullscreenEventHook
 -- Perform an arbitrary action on each internal state change or X event.
 -- See the 'XMonad.Hooks.DynamicLog' extension for examples.
 --
-myLogHook = return ()
+-- myLogHook = dynamicLogWithPP $ def { ppOutput = hPutStrLn h }
 
 ------------------------------------------------------------------------
 -- Startup hook
@@ -262,37 +291,41 @@ myStartupHook = do
 -- Run xmonad with the settings you specify. No need to modify this.
 --
 main = do 
-	xmproc <- spawnPipe "xmobar /home/frade/.config/xmobar/xmobarrc"
-	xmonad $ docks defaults
-
--- A structure containing your configuration settings, overriding
--- fields in the default config. Any you don't override, will
--- use the defaults defined in xmonad/XMonad/Config.hs
---
--- No need to modify this.
---
-defaults = def {
+   xmproc <- spawnPipe "xmobar /home/frade/.config/xmobar/xmobarrc"
+   xmonad $ docks def
+	{
       -- simple stuff
-        terminal           = myTerminal,
-        focusFollowsMouse  = myFocusFollowsMouse,
-        clickJustFocuses   = myClickJustFocuses,
-        borderWidth        = myBorderWidth,
-        modMask            = myModMask,
-        workspaces         = myWorkspaces,
-        normalBorderColor  = myNormalBorderColor,
-        focusedBorderColor = myFocusedBorderColor,
+        	terminal           = myTerminal,
+        	focusFollowsMouse  = myFocusFollowsMouse,
+        	clickJustFocuses   = myClickJustFocuses,
+        	borderWidth        = myBorderWidth,
+        	modMask            = myModMask,
+        	workspaces         = myWorkspaces,
+        	normalBorderColor  = myNormalBorderColor,
+        	focusedBorderColor = myFocusedBorderColor,
 
       -- key bindings
-        keys               = myKeys,
-        mouseBindings      = myMouseBindings,
+        	keys               = myKeys,
+        	mouseBindings      = myMouseBindings,
 
       -- hooks, layouts
-        layoutHook         = myLayout,
-        manageHook         = myManageHook <+> manageDocks,
-        handleEventHook    = myEventHook,
-        logHook            = myLogHook,
-        startupHook        = myStartupHook
-    }
+        	layoutHook         = myLayout,
+        	manageHook         = myManageHook <+> manageDocks,
+        	handleEventHook    = myEventHook,
+		logHook            = dynamicLogWithPP xmobarPP 
+			{ ppOutput = hPutStrLn xmproc 
+			, ppCurrent = xmobarColor "#c3e88d" "" . wrap "[" "]"
+			, ppVisible = xmobarColor "#c3e88d" ""
+			, ppHidden = xmobarColor "#82AAFF" "" . wrap "*" ""
+			, ppHiddenNoWindows = xmobarColor "#F07178" ""
+			, ppTitle = xmobarColor "#d0d0d0" "" . shorten 60
+			, ppSep = "<fc=#666666> | </fc>"
+			, ppUrgent = xmobarColor "#c45500" "" . wrap "!" "!"
+			, ppExtras = [windowCount]
+			, ppOrder = \(ws:l:t:ex) -> [ws,l]++ex++[t] 			
+			},
+        	startupHook        = myStartupHook
+	}
 
 -- | Finally, a copy of the default bindings in simple textual tabular format.
 help :: String
